@@ -70,7 +70,7 @@ impl ImageFile {
 
         let version = match version {
             Some(version) => version,
-            None => headers.get_version()?,
+            None => ImageHeaders::new(&dst)?.get_version()?,
         };
         let arch = match arch {
             Some(arch) => arch,

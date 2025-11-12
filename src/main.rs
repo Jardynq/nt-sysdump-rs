@@ -3,7 +3,6 @@ use nt_sysdump::{Arch, LoadFile, LoadMethod, LoadSource};
 #[cfg(feature = "no_std")]
 compile_error!("`no_std` is not supported for this binary");
 
-#[cfg(windows)]
 fn print_usage() {
     let mem = if cfg!(windows) {
         " (default: load from memory)"
@@ -141,9 +140,9 @@ fn parse_args(args: Vec<String>) -> Result<ParsedArgs, String> {
             Err(err) => return Err(format!("{err}")),
         },
         None => {
-            if cfg!(not(windows)) {
-                return Err("Must specify --file argument on non windows platforms".to_owned());
-            }
+            #[cfg(not(windows))]
+            return Err("Must specify --file argument on non windows platforms".to_owned());
+            #[cfg(windows)]
             LoadSource::Memory
         }
     };

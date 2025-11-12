@@ -16,7 +16,6 @@ use crate::memory::{ImageMemory, LdrUnloadDll};
 use crate::signature::{SigByte, sig, sig_search, sig_wide};
 use crate::{LoadError, Ptr};
 
-// 0xFEEF04BD
 const VS_FIXEDVERSION_SIG: &[SigByte] = sig!(bd 04 ef fe);
 const VS_VERSION_SIG: &[SigByte] = sig_wide!(
     'V', 'S', '_', 'V', 'E', 'R', 'S', 'I', 'O', 'N', '_', 'I', 'N', 'F', 'O'
@@ -203,15 +202,39 @@ impl<'a> ImageHeaders<'a> {
             .byte_add(res_header.VirtualAddress as usize)
             .truncate(res_header.Size as usize);
 
-        let a = sig_search(res_ptr.cast(), VS_VERSION_SIG)
-            .ok_or(LoadError::InvalidResourceDirectory)?;
-        let b = sig_search(a, VS_FIXEDVERSION_SIG).ok_or(LoadError::InvalidResourceDirectory)?;
-        let info = b
-            .cast::<VS_FIXEDFILEINFO>()
-            .as_ref()
-            .ok_or(LoadError::InvalidResourceDirectory)?;
+        // Search for VS_VERSION_INFO
+        // First search for the string signature "VS_VERSION_INFO",
+        // then search for VS_FIXEDFILEINFO signature
+        // In case "VS_VERSION_INFO" exists multiple times,
+        // loop until we find a valid VS_FIXEDFILEINFO that is close by.
+        let mut head = res_ptr;
+        while head.is_valid() {
+            println!("Searching for VS_VERSION_INFO at {:p}", head.ptr());
+            let a = sig_search(head, VS_VERSION_SIG);
+            if a.is_none() {
+                println!("No more VS_VERSION_INFO found");
+                break; // No more matches
+            }
+            let a = a.unwrap().add(VS_VERSION_SIG.len());
 
-        Ok((info.dwFileVersionLS >> 16) as u32)
+            let b = sig_search(a, VS_FIXEDVERSION_SIG);
+            if b.is_none() {
+                break; // No more matches
+            }
+            let b = b.unwrap();
+            if (b.ptr() as usize - a.ptr() as usize) > 32 {
+                // Too far away, keep searching
+                head = a;
+                continue;
+            }
+
+            let info = b
+                .cast::<VS_FIXEDFILEINFO>()
+                .as_ref()
+                .ok_or(LoadError::InvalidResourceDirectory)?;
+            return Ok(info.dwFileVersionLS >> 16);
+        }
+        Err(LoadError::InvalidResourceDirectory)
     }
 }
 
