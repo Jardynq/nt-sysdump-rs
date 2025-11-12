@@ -4,15 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["static"]
 no_std = []
-static = ["phf"]
-
-[dependencies.phf]
-version = "0.13.1"
-optional = true
-default-features = false
-features = ["macros"]
 
 [dependencies.windows-sys]
 version = "0.61.2"

@@ -10,8 +10,6 @@ static NTDLL_SIG_WOW: &[SigByte] = sig!(B8 x x ? ? BA ? ? ? ? FF D2 [C2 C3]);
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum NtdllMethod {
-    #[cfg(feature = "static")]
-    Static,
     Sorting,
     Assembly,
 }
@@ -44,12 +42,6 @@ fn get_indices(image: &Image, method: NtdllMethod) -> Result<Vec<(String, u32)>,
         (NtdllMethod::Sorting, Arch::X86) => method_sorting(exports, NTDLL_SIG_WOW),
         (NtdllMethod::Assembly, Arch::X64) => method_assembly(exports, NTDLL_SIG_NATIVE),
         (NtdllMethod::Assembly, Arch::X86) => method_assembly(exports, NTDLL_SIG_WOW),
-        #[cfg(feature = "static")]
-        (NtdllMethod::Static, arch) => crate::statics::method_static(
-            image.version,
-            arch,
-            &crate::LoadFile::Ntdll(NtdllMethod::Static),
-        ),
     }
 }
 

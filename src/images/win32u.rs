@@ -19,8 +19,6 @@ pub static WIN32U_WIDE: [u16; 11] = [
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Win32uMethod {
-    #[cfg(feature = "static")]
-    Static,
     Sorting,
     Assembly,
 }
@@ -101,12 +99,6 @@ fn get_indices(image: &Image, method: Win32uMethod) -> Result<Vec<(String, u32)>
         (Win32uMethod::Sorting, Arch::X86) => method_sorting(exports, WIN32U_SIG_WOW),
         (Win32uMethod::Assembly, Arch::X64) => method_assembly(exports, WIN32U_SIG_NATIVE),
         (Win32uMethod::Assembly, Arch::X86) => method_assembly(exports, WIN32U_SIG_WOW),
-        #[cfg(feature = "static")]
-        (Win32uMethod::Static, arch) => crate::statics::method_static(
-            image.version,
-            arch,
-            &crate::LoadFile::Win32u(Win32uMethod::Static),
-        ),
     }
 }
 

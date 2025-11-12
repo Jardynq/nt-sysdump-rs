@@ -20,8 +20,6 @@ use core::slice;
 mod image;
 mod images;
 mod signature;
-#[cfg(feature = "static")]
-mod statics;
 
 pub use image::{Arch, ImageError};
 pub use images::ntdll::NtdllMethod;
@@ -50,29 +48,6 @@ pub fn dump(
     arch: Option<Arch>,
     version: Option<u32>,
 ) -> Result<Vec<(String, u32)>, ImageError> {
-    #[cfg(feature = "static")]
-    {
-        let is_static = match file {
-            LoadFile::Ntdll(NtdllMethod::Static) => true,
-            LoadFile::Ntdll(_) => false,
-            LoadFile::Win32u(Win32uMethod::Static) => true,
-            LoadFile::Win32u(_) => false,
-
-            LoadFile::Ntoskrnl() => false,
-            LoadFile::Win32k() => false,
-            LoadFile::Wow64win() => false,
-        };
-
-        // If all information is given for a static lookup,
-        // then no need to load and read image
-        if is_static
-            && let Some(version) = version
-            && let Some(arch) = arch
-        {
-            return self::statics::method_static(version, &arch, &file);
-        }
-    }
-
     match from {
         #[cfg(windows)]
         LoadSource::Memory => match file {
@@ -196,38 +171,4 @@ impl<'a, T> Ptr<'a, T> {
         }
         unsafe { Some(slice::from_raw_parts(self.ptr, count)) }
     }
-}
-
-#[cfg(all(test, feature = "static"))]
-mod tests {
-    macro_rules! parity_memory_test {
-        ($name:ident, $image:ident, $method:ident, $methodty:ident) => {
-            #[test]
-            #[cfg(windows)]
-            fn $name() {
-                use super::images::$image::{self, *};
-                let res = $image::from_memory($method::$methodty, None, None);
-                let exp = $image::from_memory($method::Static, None, None);
-                assert!(res.is_ok());
-                assert!(exp.is_ok());
-                for ((name1, id1), (name2, id2)) in exp.unwrap().iter().zip(res.unwrap().iter()) {
-                    assert_eq!(
-                        id1, id2,
-                        "Mismatched syscall id for {}\nExpected: {}:{:x}\nActual: {}:{:x}",
-                        name1, name1, id1, name2, id2
-                    );
-                    assert_eq!(
-                        name1, name2,
-                        "Mismatched syscall name for id {:x}\nExpected: {}:{:x}\nActual: {}:{:x}",
-                        id1, name1, id1, name2, id2
-                    );
-                }
-            }
-        };
-    }
-
-    parity_memory_test!(win32u_memory_sorting, win32u, Win32uMethod, Sorting);
-    parity_memory_test!(win32u_memory_assembly, win32u, Win32uMethod, Assembly);
-    parity_memory_test!(ntdll_memory_sorting, ntdll, NtdllMethod, Sorting);
-    parity_memory_test!(ntdll_memory_assembly, ntdll, NtdllMethod, Assembly);
 }

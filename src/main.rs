@@ -5,12 +5,6 @@ compile_error!("`no_std` is not supported for this binary");
 
 #[cfg(windows)]
 fn print_usage() {
-    let stat = if cfg!(feature = "static") {
-        ", static"
-    } else {
-        ""
-    };
-
     let mem = if cfg!(windows) {
         " (default: load from memory)"
     } else {
@@ -27,8 +21,8 @@ fn print_usage() {
     eprintln!("                             Eg. --version=26100 for windows 11 24H2");
     eprintln!();
     eprintln!("Supported images and methods:");
-    eprintln!("    ntdll    : sorting, assembly{stat}");
-    eprintln!("    win32u   : sorting, assembly{stat}");
+    eprintln!("    ntdll    : sorting, assembly");
+    eprintln!("    win32u   : sorting, assembly");
     eprintln!();
     eprintln!("Methods descriptions:");
     eprintln!("    sorting:     Try to grab all exports that match a pattern");
@@ -36,13 +30,6 @@ fn print_usage() {
     eprintln!("                 This should work for all versions of NTDLL");
     eprintln!("    assembly:    Try to grab all exports that match a pattern");
     eprintln!("                 and directly extract the syscall indices from the assembly.");
-    #[cfg(feature = "static")]
-    {
-        eprintln!("    static:      Use targeted windows version to lookup syscall indices");
-        eprintln!("                 in an embedded table, which may not be up to date");
-        eprintln!("                 If both --arch and --version is specified, ");
-        eprintln!("                 then it won't parse the image and instead just do a lookup.");
-    }
 }
 
 fn inner(args: Vec<String>) -> Result<(), String> {
@@ -90,8 +77,6 @@ fn parse_args(
     // Parse image and method
     let file = match args.next().as_deref() {
         Some("ntdll") => match args.next().as_deref() {
-            #[cfg(feature = "static")]
-            Some("static") => LoadFile::Ntdll(NtdllMethod::Static),
             Some("sorting") => LoadFile::Ntdll(NtdllMethod::Sorting),
             Some("assembly") => LoadFile::Ntdll(NtdllMethod::Assembly),
             Some(other) => return Err(format!("Invalid ntdll method {other}")),
@@ -99,8 +84,6 @@ fn parse_args(
         },
         Some("ntoskrl") => unimplemented!(),
         Some("win32u") => match args.next().as_deref() {
-            #[cfg(feature = "static")]
-            Some("static") => LoadFile::Win32u(Win32uMethod::Static),
             Some("sorting") => LoadFile::Win32u(Win32uMethod::Sorting),
             Some("assembly") => LoadFile::Win32u(Win32uMethod::Assembly),
             Some(other) => return Err(format!("Invalid win32u method {other}")),
