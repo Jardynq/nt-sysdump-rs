@@ -1,4 +1,4 @@
-use nt_sysdump::{Arch, LoadFile, LoadSource, NtdllMethod, Win32uMethod};
+use nt_sysdump::{Arch, LoadFile, LoadMethod, LoadSource};
 
 #[cfg(feature = "no_std")]
 compile_error!("`no_std` is not supported for this binary");
@@ -33,9 +33,15 @@ fn print_usage() {
 }
 
 fn inner(args: Vec<String>) -> Result<(), String> {
-    let (file, source, arch, version) = parse_args(args)?;
+    let ParsedArgs {
+        file,
+        method,
+        source,
+        arch,
+        version,
+    } = parse_args(args)?;
 
-    let result = nt_sysdump::dump(file, source, arch, version).map_err(|e| e.to_string())?;
+    let result = nt_sysdump::dump(file, method, source, arch, version)?;
 
     let size = result
         .iter()
@@ -62,11 +68,16 @@ pub fn main() -> std::process::ExitCode {
     }
 }
 
-fn parse_args(
-    args: Vec<String>,
-) -> Result<(LoadFile, LoadSource, Option<Arch>, Option<u32>), String> {
+struct ParsedArgs {
+    file: LoadFile,
+    method: LoadMethod,
+    source: LoadSource,
+    arch: Option<Arch>,
+    version: Option<u32>,
+}
+fn parse_args(args: Vec<String>) -> Result<ParsedArgs, String> {
     if args.len() < 3 && args.len() > 6 {
-        return Err("Incorrect number of arguments".to_string());
+        return Err("Incorrect number of arguments".to_owned());
     }
 
     let mut args = args.into_iter();
@@ -74,24 +85,22 @@ fn parse_args(
     // Ignore self
     let _ = args.next();
 
-    // Parse image and method
+    // Parse image type
     let file = match args.next().as_deref() {
-        Some("ntdll") => match args.next().as_deref() {
-            Some("sorting") => LoadFile::Ntdll(NtdllMethod::Sorting),
-            Some("assembly") => LoadFile::Ntdll(NtdllMethod::Assembly),
-            Some(other) => return Err(format!("Invalid ntdll method {other}")),
-            None => return Err("Missing method for ntdll".to_string()),
-        },
-        Some("ntoskrl") => unimplemented!(),
-        Some("win32u") => match args.next().as_deref() {
-            Some("sorting") => LoadFile::Win32u(Win32uMethod::Sorting),
-            Some("assembly") => LoadFile::Win32u(Win32uMethod::Assembly),
-            Some(other) => return Err(format!("Invalid win32u method {other}")),
-            None => return Err("Missing method for win32u".to_string()),
-        },
-        Some("win32k") => unimplemented!(),
+        Some("ntdll") => LoadFile::Ntdll,
+        Some("ntoskrnl") => LoadFile::Ntoskrnl,
+        Some("win32u") => LoadFile::Win32u,
+        Some("win32k") => LoadFile::Win32k,
         Some(other) => return Err(format!("Invalid image type {other}")),
-        None => return Err("Missing image type".to_string()),
+        None => return Err("Missing image type".to_owned()),
+    };
+
+    // Parse method
+    let method = match args.next().as_deref() {
+        Some("sorting") => LoadMethod::Sorting,
+        Some("assembly") => LoadMethod::Assembly,
+        Some(other) => return Err(format!("Invalid method {other}")),
+        None => return Err("Missing method".to_owned()),
     };
 
     // Parse options
@@ -108,9 +117,9 @@ fn parse_args(
             }
         } else if let Some(path_str) = arg.strip_prefix("--file=") {
             source = if path_str.starts_with('"') {
-                Some(path_str[1..path_str.len() - 1].to_string())
+                Some(path_str[1..path_str.len() - 1].to_owned())
             } else {
-                Some(path_str.to_string())
+                Some(path_str.to_owned())
             };
         } else if let Some(version_str) = arg.strip_prefix("--version=") {
             version = match version_str.parse::<u32>() {
@@ -133,10 +142,16 @@ fn parse_args(
         },
         None => {
             if cfg!(not(windows)) {
-                return Err("Must specify --file argument on non windows platforms".to_string());
+                return Err("Must specify --file argument on non windows platforms".to_owned());
             }
             LoadSource::Memory
         }
     };
-    Ok((file, source, arch, version))
+    Ok(ParsedArgs {
+        file,
+        method,
+        source,
+        arch,
+        version,
+    })
 }

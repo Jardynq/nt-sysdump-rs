@@ -1,4 +1,5 @@
-use crate::image::{Arch, ArchData, ImageError, ImageHeaders};
+use crate::LoadError;
+use crate::image::{Arch, ArchData, ImageHeaders};
 use core::ffi::{c_ulong, c_void};
 use core::slice;
 use ntapi::ntldr::LDR_DATA_TABLE_ENTRY;
@@ -34,7 +35,7 @@ impl ImageMemory {
         unload_fn: Option<LdrUnloadDll>,
         arch: Option<Arch>,
         version: Option<u32>,
-    ) -> Result<(Self, Arch, u32), ImageError> {
+    ) -> Result<(Self, Arch, u32), LoadError> {
         let iter = ImageIter::new()?;
         for (image_name, base, size) in iter {
             if u16_str_eq(image_name, name) {
@@ -54,7 +55,7 @@ impl ImageMemory {
                 return Ok((Self { data, unload_fn }, arch, version));
             }
         }
-        Err(ImageError::ImageNotFound)
+        Err(LoadError::ImageNotFound)
     }
 }
 
@@ -63,7 +64,7 @@ pub(crate) struct ImageIter {
     current: *const LIST_ENTRY,
 }
 impl ImageIter {
-    pub(crate) fn new() -> Result<Self, ImageError> {
+    pub(crate) fn new() -> Result<Self, LoadError> {
         #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
         compile_error!("Unsupported architecture");
 
@@ -76,10 +77,10 @@ impl ImageIter {
 
             let ldr = peb
                 .as_ref()
-                .ok_or(ImageError::LoaderTableNotFound)?
+                .ok_or(LoadError::LoaderTableNotFound)?
                 .Ldr
                 .as_ref()
-                .ok_or(ImageError::LoaderTableNotFound)?;
+                .ok_or(LoadError::LoaderTableNotFound)?;
             let head = &ldr.InLoadOrderModuleList as *const LIST_ENTRY;
             let current = (*head).Flink;
             Ok(Self { head, current })

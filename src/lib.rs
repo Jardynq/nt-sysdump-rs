@@ -21,17 +21,21 @@ mod image;
 mod images;
 mod signature;
 
-pub use image::{Arch, ImageError};
-pub use images::ntdll::NtdllMethod;
-pub use images::win32u::Win32uMethod;
+pub use image::Arch;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum LoadFile {
-    Ntdll(NtdllMethod),   // Nt syscalls from user mode dll
-    Ntoskrnl(),           // Nt syscalls from kernel module
-    Win32u(Win32uMethod), // User32 syscalls from user mode dll
-    Win32k(),             // User32 syscalls from kernel module
-    Wow64win(),           // Nt and User32 syscalls from user mode dll
+    Ntdll,    // Nt syscalls from user mode dll
+    Ntoskrnl, // Nt syscalls from kernel module
+    Win32u,   // User32 syscalls from user mode dll
+    Win32k,   // User32 syscalls from kernel module
+    Wow64win, // Nt and User32 syscalls from user mode dll
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum LoadMethod {
+    Sorting,
+    Assembly,
 }
 
 pub enum LoadSource {
@@ -41,28 +45,99 @@ pub enum LoadSource {
     File(String),
 }
 
+#[derive(Debug)]
+pub enum LoadError {
+    #[cfg(not(feature = "no_std"))]
+    IoError(std::io::Error),
+
+    ImageNotFound,
+    UnsupportedArchitecture(Arch),
+    UnsupportedVersion(u32),
+    UnsupportedMethod,
+    LoaderTableNotFound,
+    InvalidPEFormat,
+    InvalidDosHeader,
+    InvalidNtHeaders,
+    InvalidSectionHeaders,
+    InvalidSection,
+    InvalidExportDirectory,
+    InvalidExportNames,
+    InvalidExportOrdinals,
+    InvalidExportFunctions,
+    InvalidResourceDirectory,
+}
+impl core::fmt::Display for LoadError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            LoadError::ImageNotFound => write!(f, "Image not found"),
+            LoadError::UnsupportedArchitecture(arch) => {
+                write!(f, "Unsupported architecture: {}", arch)
+            }
+            LoadError::UnsupportedVersion(version) => {
+                write!(f, "Unsupported version: {}", version)
+            }
+            LoadError::UnsupportedMethod => write!(f, "Unsupported method"),
+            LoadError::LoaderTableNotFound => write!(f, "Loader table not found"),
+            LoadError::InvalidPEFormat => write!(f, "Invalid PE format"),
+            LoadError::InvalidDosHeader => write!(f, "Invalid DOS header"),
+            LoadError::InvalidNtHeaders => write!(f, "Invalid NT headers"),
+            LoadError::InvalidSectionHeaders => write!(f, "Invalid section headers"),
+            LoadError::InvalidSection => write!(f, "Invalid section"),
+            LoadError::InvalidExportDirectory => write!(f, "Invalid export directory"),
+            LoadError::InvalidExportNames => write!(f, "Invalid export names"),
+            LoadError::InvalidExportOrdinals => write!(f, "Invalid export ordinals"),
+            LoadError::InvalidExportFunctions => write!(f, "Invalid export functions"),
+            LoadError::InvalidResourceDirectory => write!(f, "Invalid resource directory"),
+            #[cfg(not(feature = "no_std"))]
+            LoadError::IoError(e) => write!(f, "File IO error: {}", e),
+        }
+    }
+}
+impl From<LoadError> for String {
+    fn from(e: LoadError) -> Self {
+        e.to_string()
+    }
+}
+
 #[allow(unused_variables)]
 pub fn dump(
     file: LoadFile,
+    method: LoadMethod,
     from: LoadSource,
     arch: Option<Arch>,
     version: Option<u32>,
-) -> Result<Vec<(String, u32)>, ImageError> {
+) -> Result<Vec<(String, u32)>, LoadError> {
     match from {
         #[cfg(windows)]
-        LoadSource::Memory => match file {
-            LoadFile::Ntdll(method) => images::ntdll::from_memory(method, arch, version),
-            //LoadFile::Ntoskrnl(method) => images::ntoskrnl::from_memory(method),
-            LoadFile::Win32u(method) => images::win32u::from_memory(method, arch, version),
-            //LoadFile::Win32k(method) => images::win32k::from_memory(method),
+        LoadSource::Memory => match (file, method) {
+            (LoadFile::Ntdll, LoadMethod::Sorting) => {
+                images::ntdll::from_memory(LoadMethod::Sorting, arch, version)
+            }
+            (LoadFile::Ntdll, LoadMethod::Assembly) => {
+                images::ntdll::from_memory(LoadMethod::Assembly, arch, version)
+            }
+            (LoadFile::Win32u, LoadMethod::Sorting) => {
+                images::win32u::from_memory(LoadMethod::Sorting, arch, version)
+            }
+            (LoadFile::Win32u, LoadMethod::Assembly) => {
+                images::win32u::from_memory(LoadMethod::Assembly, arch, version)
+            }
             _ => unimplemented!(),
         },
         #[cfg(not(feature = "no_std"))]
-        LoadSource::File(path) => match file {
-            LoadFile::Ntdll(method) => images::ntdll::from_file(&path, method, arch, version),
-            //LoadFile::Ntoskrnl(method) => images::ntoskrnl::from_file(path, method),
-            LoadFile::Win32u(method) => images::win32u::from_file(&path, method, arch, version),
-            //LoadFile::Win32k(method) => images::win32k::from_file(path, method),
+        LoadSource::File(path) => match (file, method) {
+            (LoadFile::Ntdll, LoadMethod::Sorting) => {
+                images::ntdll::from_file(&path, LoadMethod::Sorting, arch, version)
+            }
+            (LoadFile::Ntdll, LoadMethod::Assembly) => {
+                images::ntdll::from_file(&path, LoadMethod::Assembly, arch, version)
+            }
+            (LoadFile::Win32u, LoadMethod::Sorting) => {
+                images::win32u::from_file(&path, LoadMethod::Sorting, arch, version)
+            }
+            (LoadFile::Win32u, LoadMethod::Assembly) => {
+                images::win32u::from_file(&path, LoadMethod::Assembly, arch, version)
+            }
             _ => unimplemented!(),
         },
     }

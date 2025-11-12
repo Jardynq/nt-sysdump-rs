@@ -4,6 +4,7 @@ use alloc::{string::String, vec::Vec};
 
 use crate::image::*;
 use crate::signature::{SigByte, sig, sig_extract_u16, sig_match, sig_wide};
+use crate::{LoadError, LoadMethod};
 
 static WIN32U_SIG_NATIVE: &[SigByte] =
     sig!(4C 8B D1 B8 x x ? ? F6 04 25 ? ? ? ? 01 75 03 0F 05 C3 CD "2E" C3);
@@ -17,35 +18,29 @@ pub static WIN32U_WIDE: [u16; 11] = [
     'l' as u16, 'l' as u16, 0,
 ];
 
-#[derive(Clone, Copy, PartialEq)]
-pub enum Win32uMethod {
-    Sorting,
-    Assembly,
-}
-
 #[cfg(not(feature = "no_std"))]
 pub fn from_file(
     path: &str,
-    method: Win32uMethod,
+    method: LoadMethod,
     arch: Option<Arch>,
     version: Option<u32>,
-) -> Result<Vec<(String, u32)>, ImageError> {
+) -> Result<Vec<(String, u32)>, LoadError> {
     let image = Image::from_file(path, arch, version)?;
     get_indices(&image, method)
 }
 
 #[cfg(windows)]
 pub fn from_memory(
-    method: Win32uMethod,
+    method: LoadMethod,
     arch: Option<Arch>,
     version: Option<u32>,
-) -> Result<Vec<(String, u32)>, ImageError> {
+) -> Result<Vec<(String, u32)>, LoadError> {
     use crate::memory::{LdrLoadDll, LdrUnloadDll};
     use windows_sys::Win32::Foundation::UNICODE_STRING;
 
     let image = match Image::from_memory("win32u.dll", None, arch, version) {
         Ok(image) => image,
-        Err(ImageError::ImageNotFound) => {
+        Err(LoadError::ImageNotFound) => {
             // win32u.dll is not loaded.
             // Use ntdll to grab LdrLoadDll and load win32u.dll.
             let image = Image::from_memory("ntdll.dll", None, None, Some(0))?;
@@ -66,7 +61,7 @@ pub fn from_memory(
                 }
             }
             if load_fn.is_none() || unload_fn.is_none() {
-                return Err(ImageError::InvalidExportDirectory);
+                return Err(LoadError::InvalidExportDirectory);
             }
 
             unsafe {
@@ -90,15 +85,13 @@ pub fn from_memory(
     get_indices(&image, method)
 }
 
-fn get_indices(image: &Image, method: Win32uMethod) -> Result<Vec<(String, u32)>, ImageError> {
-    println!("Win32u Image Version: {}", image.version);
-    println!("Win32u Image Arch: {}", image.arch);
+fn get_indices(image: &Image, method: LoadMethod) -> Result<Vec<(String, u32)>, LoadError> {
     let exports = ExportIter::new(image)?;
     match (method, &image.arch) {
-        (Win32uMethod::Sorting, Arch::X64) => method_sorting(exports, WIN32U_SIG_NATIVE),
-        (Win32uMethod::Sorting, Arch::X86) => method_sorting(exports, WIN32U_SIG_WOW),
-        (Win32uMethod::Assembly, Arch::X64) => method_assembly(exports, WIN32U_SIG_NATIVE),
-        (Win32uMethod::Assembly, Arch::X86) => method_assembly(exports, WIN32U_SIG_WOW),
+        (LoadMethod::Sorting, Arch::X64) => method_sorting(exports, WIN32U_SIG_NATIVE),
+        (LoadMethod::Sorting, Arch::X86) => method_sorting(exports, WIN32U_SIG_WOW),
+        (LoadMethod::Assembly, Arch::X64) => method_assembly(exports, WIN32U_SIG_NATIVE),
+        (LoadMethod::Assembly, Arch::X86) => method_assembly(exports, WIN32U_SIG_WOW),
     }
 }
 
@@ -110,7 +103,7 @@ fn get_indices(image: &Image, method: Win32uMethod) -> Result<Vec<(String, u32)>
 fn method_sorting(
     exports: ExportIter,
     signature: &[SigByte],
-) -> Result<Vec<(String, u32)>, ImageError> {
+) -> Result<Vec<(String, u32)>, LoadError> {
     let mut result: Vec<(String, usize)> = exports
         .filter_map(|(name, ptr)| {
             let name = String::from_utf8(name.to_vec()).ok()?;
@@ -133,7 +126,7 @@ fn method_sorting(
 fn method_assembly(
     exports: ExportIter,
     signature: &[SigByte],
-) -> Result<Vec<(String, u32)>, ImageError> {
+) -> Result<Vec<(String, u32)>, LoadError> {
     let mut result: Vec<(String, u32)> = exports
         .into_iter()
         .filter_map(|(name, ptr)| {

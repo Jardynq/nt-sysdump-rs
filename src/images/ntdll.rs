@@ -1,5 +1,6 @@
 use crate::image::*;
 use crate::signature::{SigByte, sig, sig_extract_u16};
+use crate::{LoadError, LoadMethod};
 
 #[cfg(feature = "no_std")]
 use alloc::{string::String, vec::Vec};
@@ -8,40 +9,34 @@ static NTDLL_SIG_NATIVE: &[SigByte] =
     sig!(4C 8B D1 B8 x x ? ? F6 04 25 ? ? ? ? 01 75 03 0F 05 C3 CD "2E" C3);
 static NTDLL_SIG_WOW: &[SigByte] = sig!(B8 x x ? ? BA ? ? ? ? FF D2 [C2 C3]);
 
-#[derive(Clone, Copy, PartialEq)]
-pub enum NtdllMethod {
-    Sorting,
-    Assembly,
-}
-
 #[cfg(not(feature = "no_std"))]
 pub fn from_file(
     path: &str,
-    method: NtdllMethod,
+    method: LoadMethod,
     arch: Option<Arch>,
     version: Option<u32>,
-) -> Result<Vec<(String, u32)>, ImageError> {
+) -> Result<Vec<(String, u32)>, LoadError> {
     let image = Image::from_file(path, arch, version)?;
     get_indices(&image, method)
 }
 
 #[cfg(windows)]
 pub fn from_memory(
-    method: NtdllMethod,
+    method: LoadMethod,
     arch: Option<Arch>,
     version: Option<u32>,
-) -> Result<Vec<(String, u32)>, ImageError> {
+) -> Result<Vec<(String, u32)>, LoadError> {
     let image = Image::from_memory("ntdll.dll", None, arch, version)?;
     get_indices(&image, method)
 }
 
-fn get_indices(image: &Image, method: NtdllMethod) -> Result<Vec<(String, u32)>, ImageError> {
+fn get_indices(image: &Image, method: LoadMethod) -> Result<Vec<(String, u32)>, LoadError> {
     let exports = ExportIter::new(image)?;
     match (method, &image.arch) {
-        (NtdllMethod::Sorting, Arch::X64) => method_sorting(exports, NTDLL_SIG_NATIVE),
-        (NtdllMethod::Sorting, Arch::X86) => method_sorting(exports, NTDLL_SIG_WOW),
-        (NtdllMethod::Assembly, Arch::X64) => method_assembly(exports, NTDLL_SIG_NATIVE),
-        (NtdllMethod::Assembly, Arch::X86) => method_assembly(exports, NTDLL_SIG_WOW),
+        (LoadMethod::Sorting, Arch::X64) => method_sorting(exports, NTDLL_SIG_NATIVE),
+        (LoadMethod::Sorting, Arch::X86) => method_sorting(exports, NTDLL_SIG_WOW),
+        (LoadMethod::Assembly, Arch::X64) => method_assembly(exports, NTDLL_SIG_NATIVE),
+        (LoadMethod::Assembly, Arch::X86) => method_assembly(exports, NTDLL_SIG_WOW),
     }
 }
 
@@ -51,7 +46,7 @@ fn get_indices(image: &Image, method: NtdllMethod) -> Result<Vec<(String, u32)>,
     So we grab all functions that start with "Zw" and sort them,
     their sorted index is their syscall index.
 */
-fn method_sorting(exports: ExportIter, _: &[SigByte]) -> Result<Vec<(String, u32)>, ImageError> {
+fn method_sorting(exports: ExportIter, _: &[SigByte]) -> Result<Vec<(String, u32)>, LoadError> {
     let mut result: Vec<(String, usize)> = exports
         .filter_map(|(name, ptr)| {
             name.starts_with(b"Zw")
@@ -78,7 +73,7 @@ fn method_sorting(exports: ExportIter, _: &[SigByte]) -> Result<Vec<(String, u32
 fn method_assembly(
     exports: ExportIter,
     signature: &[SigByte],
-) -> Result<Vec<(String, u32)>, ImageError> {
+) -> Result<Vec<(String, u32)>, LoadError> {
     let mut result: Vec<(String, u32)> = exports
         .into_iter()
         .filter_map(|(name, ptr)| {

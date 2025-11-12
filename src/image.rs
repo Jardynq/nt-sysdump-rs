@@ -9,65 +9,18 @@ use windows_sys::Win32::System::Diagnostics::Debug::{
 };
 use windows_sys::Win32::System::SystemServices::{IMAGE_DOS_HEADER, IMAGE_EXPORT_DIRECTORY};
 
-use crate::Ptr;
 #[cfg(not(feature = "no_std"))]
 use crate::file::ImageFile;
 #[cfg(target_os = "windows")]
 use crate::memory::{ImageMemory, LdrUnloadDll};
 use crate::signature::{SigByte, sig, sig_search, sig_wide};
+use crate::{LoadError, Ptr};
 
 // 0xFEEF04BD
 const VS_FIXEDVERSION_SIG: &[SigByte] = sig!(bd 04 ef fe);
 const VS_VERSION_SIG: &[SigByte] = sig_wide!(
     'V', 'S', '_', 'V', 'E', 'R', 'S', 'I', 'O', 'N', '_', 'I', 'N', 'F', 'O'
 );
-
-#[derive(Debug)]
-pub enum ImageError {
-    #[cfg(not(feature = "no_std"))]
-    IoError(std::io::Error),
-
-    ImageNotFound,
-    UnsupportedArchitecture(Arch),
-    UnsupportedVersion(u32),
-    LoaderTableNotFound,
-    InvalidPEFormat,
-    InvalidDosHeader,
-    InvalidNtHeaders,
-    InvalidSectionHeaders,
-    InvalidSection,
-    InvalidExportDirectory,
-    InvalidExportNames,
-    InvalidExportOrdinals,
-    InvalidExportFunctions,
-    InvalidResourceDirectory,
-}
-impl core::fmt::Display for ImageError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            ImageError::ImageNotFound => write!(f, "Image not found"),
-            ImageError::UnsupportedArchitecture(arch) => {
-                write!(f, "Unsupported architecture: {}", arch)
-            }
-            ImageError::LoaderTableNotFound => write!(f, "Loader table not found"),
-            ImageError::InvalidPEFormat => write!(f, "Invalid PE format"),
-            ImageError::InvalidDosHeader => write!(f, "Invalid DOS header"),
-            ImageError::InvalidNtHeaders => write!(f, "Invalid NT headers"),
-            ImageError::InvalidSectionHeaders => write!(f, "Invalid section headers"),
-            ImageError::InvalidSection => write!(f, "Invalid section"),
-            ImageError::InvalidExportDirectory => write!(f, "Invalid export directory"),
-            ImageError::InvalidExportNames => write!(f, "Invalid export names"),
-            ImageError::InvalidExportOrdinals => write!(f, "Invalid export ordinals"),
-            ImageError::InvalidExportFunctions => write!(f, "Invalid export functions"),
-            ImageError::InvalidResourceDirectory => write!(f, "Invalid resource directory"),
-            ImageError::UnsupportedVersion(version) => {
-                write!(f, "Unsupported version: {}", version)
-            }
-            #[cfg(not(feature = "no_std"))]
-            ImageError::IoError(e) => write!(f, "File IO error: {}", e),
-        }
-    }
-}
 
 #[derive(Clone)]
 pub(crate) enum ImageType {
@@ -123,7 +76,7 @@ impl Image {
         path: &str,
         arch: Option<Arch>,
         version: Option<u32>,
-    ) -> Result<Self, ImageError> {
+    ) -> Result<Self, LoadError> {
         let (file, arch, version) = ImageFile::new(path, arch, version)?;
         Ok(Self {
             arch,
@@ -138,7 +91,7 @@ impl Image {
         unload_fn: Option<LdrUnloadDll>,
         arch: Option<Arch>,
         version: Option<u32>,
-    ) -> Result<Self, ImageError> {
+    ) -> Result<Self, LoadError> {
         let (memory, arch, version) = ImageMemory::new(name, unload_fn, arch, version)?;
         Ok(Self {
             arch,
@@ -158,20 +111,20 @@ pub(crate) struct ImageHeaders<'a> {
     pub(crate) directory: &'a [IMAGE_DATA_DIRECTORY],
 }
 impl<'a> ImageHeaders<'a> {
-    pub(crate) fn new(data: &'a [u8]) -> Result<Self, ImageError> {
+    pub(crate) fn new(data: &'a [u8]) -> Result<Self, LoadError> {
         let ptr = Ptr::from(data);
 
         let dos = ptr
             .cast::<IMAGE_DOS_HEADER>()
             .as_ref()
-            .ok_or(ImageError::InvalidDosHeader)?;
+            .ok_or(LoadError::InvalidDosHeader)?;
         if dos.e_magic != 0x5A4D {
-            return Err(ImageError::InvalidDosHeader);
+            return Err(LoadError::InvalidDosHeader);
         }
 
         let sig = ptr.byte_add(dos.e_lfanew as usize).cast::<u32>().as_ref();
         if sig != Some(&0x00004550) {
-            return Err(ImageError::InvalidNtHeaders);
+            return Err(LoadError::InvalidNtHeaders);
         }
 
         let file = ptr
@@ -179,7 +132,7 @@ impl<'a> ImageHeaders<'a> {
             .byte_add(size_of::<u32>())
             .cast::<IMAGE_FILE_HEADER>()
             .as_ref()
-            .ok_or(ImageError::InvalidNtHeaders)?;
+            .ok_or(LoadError::InvalidNtHeaders)?;
 
         let opt_ptr = ptr
             .byte_add(dos.e_lfanew as usize)
@@ -189,32 +142,32 @@ impl<'a> ImageHeaders<'a> {
         let magic = opt_ptr
             .cast::<u16>()
             .read()
-            .ok_or(ImageError::InvalidPEFormat)?;
+            .ok_or(LoadError::InvalidPEFormat)?;
 
         let opt = match magic {
             IMAGE_NT_OPTIONAL_HDR32_MAGIC => ArchData::X86(
                 opt_ptr
                     .cast::<IMAGE_OPTIONAL_HEADER32>()
                     .as_ref()
-                    .ok_or(ImageError::InvalidPEFormat)?,
+                    .ok_or(LoadError::InvalidPEFormat)?,
             ),
             IMAGE_NT_OPTIONAL_HDR64_MAGIC => ArchData::X64(
                 opt_ptr
                     .cast::<IMAGE_OPTIONAL_HEADER64>()
                     .as_ref()
-                    .ok_or(ImageError::InvalidPEFormat)?,
+                    .ok_or(LoadError::InvalidPEFormat)?,
             ),
-            _ => return Err(ImageError::InvalidPEFormat),
+            _ => return Err(LoadError::InvalidPEFormat),
         };
         match opt {
             ArchData::X86(opt) => {
                 if opt.SizeOfImage <= opt.SizeOfHeaders {
-                    return Err(ImageError::InvalidNtHeaders);
+                    return Err(LoadError::InvalidNtHeaders);
                 }
             }
             ArchData::X64(opt) => {
                 if opt.SizeOfImage <= opt.SizeOfHeaders {
-                    return Err(ImageError::InvalidNtHeaders);
+                    return Err(LoadError::InvalidNtHeaders);
                 }
             }
         }
@@ -231,7 +184,7 @@ impl<'a> ImageHeaders<'a> {
             .byte_add(file.SizeOfOptionalHeader as usize)
             .cast::<IMAGE_SECTION_HEADER>()
             .as_slice(file.NumberOfSections as usize)
-            .ok_or(ImageError::InvalidSectionHeaders)?;
+            .ok_or(LoadError::InvalidSectionHeaders)?;
 
         Ok(Self {
             ptr,
@@ -243,7 +196,7 @@ impl<'a> ImageHeaders<'a> {
         })
     }
 
-    pub(crate) fn get_version(&self) -> Result<u32, ImageError> {
+    pub(crate) fn get_version(&self) -> Result<u32, LoadError> {
         let res_header = self.directory[IMAGE_DIRECTORY_ENTRY_RESOURCE as usize];
         let res_ptr = self
             .ptr
@@ -251,12 +204,12 @@ impl<'a> ImageHeaders<'a> {
             .truncate(res_header.Size as usize);
 
         let a = sig_search(res_ptr.cast(), VS_VERSION_SIG)
-            .ok_or(ImageError::InvalidResourceDirectory)?;
-        let b = sig_search(a, VS_FIXEDVERSION_SIG).ok_or(ImageError::InvalidResourceDirectory)?;
+            .ok_or(LoadError::InvalidResourceDirectory)?;
+        let b = sig_search(a, VS_FIXEDVERSION_SIG).ok_or(LoadError::InvalidResourceDirectory)?;
         let info = b
             .cast::<VS_FIXEDFILEINFO>()
             .as_ref()
-            .ok_or(ImageError::InvalidResourceDirectory)?;
+            .ok_or(LoadError::InvalidResourceDirectory)?;
 
         Ok((info.dwFileVersionLS >> 16) as u32)
     }
@@ -269,7 +222,7 @@ pub(crate) struct ExportIter<'a> {
     internal: core::iter::Zip<core::slice::Iter<'a, u32>, core::slice::Iter<'a, u16>>,
 }
 impl<'a> ExportIter<'a> {
-    pub(crate) fn new(image: &'a Image) -> Result<Self, ImageError> {
+    pub(crate) fn new(image: &'a Image) -> Result<Self, LoadError> {
         let headers = ImageHeaders::new(image.data())?;
         let ptr = Ptr::from(image.data());
 
@@ -278,23 +231,23 @@ impl<'a> ExportIter<'a> {
             .byte_add(entry.VirtualAddress as usize)
             .cast::<IMAGE_EXPORT_DIRECTORY>()
             .as_ref()
-            .ok_or(ImageError::InvalidExportDirectory)?;
+            .ok_or(LoadError::InvalidExportDirectory)?;
 
         let names = ptr
             .byte_add(export.AddressOfNames as usize)
             .cast::<u32>()
             .as_slice(export.NumberOfNames as usize)
-            .ok_or(ImageError::InvalidExportNames)?;
+            .ok_or(LoadError::InvalidExportNames)?;
         let functions = ptr
             .byte_add(export.AddressOfFunctions as usize)
             .cast::<u32>()
             .as_slice(export.NumberOfFunctions as usize)
-            .ok_or(ImageError::InvalidExportFunctions)?;
+            .ok_or(LoadError::InvalidExportFunctions)?;
         let ordinals = ptr
             .byte_add(export.AddressOfNameOrdinals as usize)
             .cast::<u16>()
             .as_slice(export.NumberOfNames as usize)
-            .ok_or(ImageError::InvalidExportOrdinals)?;
+            .ok_or(LoadError::InvalidExportOrdinals)?;
 
         Ok(Self {
             image,
